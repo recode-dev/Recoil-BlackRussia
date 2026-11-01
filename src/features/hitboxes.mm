@@ -15,7 +15,7 @@ struct PedHitboxSphere {
 };
 
 constexpr int kSphereCount = 10;
-constexpr float kMultiplier = 7.5f;
+constexpr float kMultiplier = 10.0f;
 
 uintptr_t game_base() {
     static uintptr_t base = 0;
