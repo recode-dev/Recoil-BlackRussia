@@ -1,0 +1,325 @@
+name: Prepare
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  CLANG_TIDY_CONFIG: |
+    Checks: >
+      -*,
+      bugprone-*,
+      clang-analyzer-*,
+      concurrency-thread-canceltype-asynchronous,
+      cppcoreguidelines-*,
+      misc-*,
+      modernize-*,
+      performance-*,
+      readability-*,
+      -bugprone-easily-swappable-parameters,
+      -bugprone-exception-escape,
+      -bugprone-implicit-widening-of-multiplication-result,
+      -bugprone-incorrect-roundings,
+      -bugprone-multi-level-implicit-pointer-conversion,
+      -bugprone-narrowing-conversions,
+      -bugprone-reserved-identifier,
+      -bugprone-signed-bitwise,
+      -cppcoreguidelines-avoid-c-arrays,
+      -cppcoreguidelines-avoid-do-while,
+      -cppcoreguidelines-avoid-magic-numbers,
+      -cppcoreguidelines-avoid-non-const-global-variables,
+      -cppcoreguidelines-macro-usage,
+      -cppcoreguidelines-narrowing-conversions,
+      -cppcoreguidelines-no-malloc,
+      -cppcoreguidelines-non-private-member-variables-in-classes,
+      -cppcoreguidelines-owning-memory,
+      -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+      -cppcoreguidelines-pro-bounds-constant-array-index,
+      -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+      -cppcoreguidelines-pro-type-const-cast,
+      -cppcoreguidelines-pro-type-cstyle-cast,
+      -cppcoreguidelines-pro-type-member-init,
+      -cppcoreguidelines-pro-type-reinterpret-cast,
+      -cppcoreguidelines-pro-type-union-access,
+      -cppcoreguidelines-pro-type-vararg,
+      -cppcoreguidelines-special-member-functions,
+      -misc-const-correctness,
+      -misc-definitions-in-headers,
+      -misc-include-cleaner,
+      -misc-non-private-member-variables-in-classes,
+      -misc-use-internal-linkage,
+      -modernize-avoid-c-arrays,
+      -modernize-avoid-c-style-cast,
+      -modernize-use-auto,
+      -modernize-use-nodiscard,
+      -modernize-use-trailing-return-type,
+      -performance-no-int-to-ptr,
+      -readability-avoid-nested-conditional-operator,
+      -readability-braces-around-statements,
+      -readability-convert-member-functions-to-static,
+      -readability-else-after-return,
+      -readability-function-cognitive-complexity,
+      -readability-identifier-length,
+      -readability-identifier-naming,
+      -readability-isolate-declaration,
+      -readability-implicit-bool-conversion,
+      -readability-magic-numbers,
+      -readability-make-member-function-const,
+      -readability-math-missing-parentheses,
+      -readability-static-definition-in-anonymous-namespace,
+      -readability-uppercase-literal-suffix,
+      -readability-use-std-min-max,
+      -misc-use-anonymous-namespace,
+      -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
+    WarningsAsErrors: ''
+    HeaderFilterRegex: '(^|/)src/.*\.(h|hpp)$'
+    FormatStyle: none
+    CheckOptions:
+      - key: readability-function-size.StatementThreshold
+        value: '800'
+      - key: readability-function-size.LineThreshold
+        value: '800'
+      - key: readability-function-size.NestingThreshold
+        value: '25'
+      - key: modernize-loop-convert.MinConfidence
+        value: reasonable
+      - key: cppcoreguidelines-explicit-virtual-functions.IgnoreDestructors
+        value: '1'
+
+concurrency:
+  group: prepare-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Tool
+        run: npm install --global clang-format@1.8.0
+
+      - name: Clean junk
+        run: |
+          set -euo pipefail
+          git ls-files -z |
+            { grep -zE '(^|/)(core|\.DS_Store|Thumbs\.db)$|\.(orig|rej|bak|swp)$|~$' || true; } |
+            xargs -0 -r git rm -q --
+
+      - name: Cache
+        uses: actions/cache@v6
+        with:
+          path: ~/theos
+          key: theos-${{ runner.os }}-v6
+
+      - name: Gum
+        run: |
+          set -euo pipefail
+          ver="$(grep -m1 'FRIDA_VERSION:' .github/workflows/build.yml 2>/dev/null | awk '{print $2}' || true)"
+          if [ -z "$ver" ]; then
+            ver="17.24.3"
+          fi
+          echo "frida-gum devkit: $ver"
+          dir="vendor/frida-gum"
+          if [ -f "$dir/frida-gum.h" ] || [ -f "$dir/include/frida-gum.h" ]; then
+            echo "using committed devkit"
+            exit 0
+          fi
+          mkdir -p "$dir"
+          curl -fsSL -o /tmp/gum.tar.xz \
+            "https://github.com/frida/frida/releases/download/${ver}/frida-gum-devkit-${ver}-ios-arm64.tar.xz"
+          tar -xJf /tmp/gum.tar.xz -C "$dir"
+
+      - name: Theos
+        run: |
+          set -euo pipefail
+          export THEOS="$HOME/theos"
+          if [ -f "$THEOS/makefiles/common.mk" ] && [ -n "$(ls -A "$THEOS/toolchain/linux/iphone" 2>/dev/null)" ]; then
+            echo "using cached theos"
+            exit 0
+          fi
+          curl -fsSL -o /tmp/theos-install https://raw.githubusercontent.com/theos/theos/master/bin/install-theos
+          sed -i 's/\blibxml2\b/libxml2-16/' /tmp/theos-install
+          bash /tmp/theos-install </dev/null
+          lib="$(dpkg -L libxml2-16 | grep 'libxml2\.so\.16$' | head -1)"
+          [ -n "$lib" ] && sudo ln -sf "$lib" "$(dirname "$lib")/libxml2.so.2"
+
+      - name: Config
+        run: |
+          set -euo pipefail
+          if ! command -v clang-tidy >/dev/null 2>&1; then
+            pip install --quiet clang-tidy || {
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq clang-tidy
+            }
+          fi
+          clang-tidy --version
+          clang-tidy --checks='*' --list-checks 2>/dev/null |
+            sed -n 's/^    //p' | grep -E '^[a-zA-Z0-9]+(-[a-zA-Z0-9.]+)+$' | sort -u > /tmp/known-checks.txt
+          echo "known checks: $(wc -l < /tmp/known-checks.txt)"
+          python3 - "$CLANG_TIDY_CONFIG" <<'PY'
+          import sys, yaml
+          cfg = yaml.safe_load(sys.argv[1])
+          known = set(open("/tmp/known-checks.txt").read().split())
+          tokens = [t.strip() for t in cfg["Checks"].split(",") if t.strip()]
+          kept = []
+          for t in tokens:
+            name = t[1:] if t.startswith("-") else t
+            if "*" in t or name in known:
+              kept.append(t)
+          dropped = [t for t in tokens if t not in kept]
+          if dropped:
+            print("dropped unknown checks:", ", ".join(dropped))
+          cfg["Checks"] = ", ".join(kept)
+          with open("/tmp/clang-tidy-config.yaml", "w") as f:
+            yaml.safe_dump(cfg, f, sort_keys=False)
+          print("effective checks:", len(kept))
+          PY
+          clang-tidy --verify-config --config-file=/tmp/clang-tidy-config.yaml
+
+      - name: Tidy
+        run: |
+          set -euo pipefail
+          export THEOS="$HOME/theos"
+          SDK="$(ls -d "$THEOS"/sdks/iPhoneOS*.sdk 2>/dev/null | head -1 || true)"
+          if [ -z "$SDK" ]; then
+            echo "no iPhoneOS sdk in $THEOS/sdks; skipping tidy"
+            exit 0
+          fi
+          GUM="$(dirname "$(ls vendor/frida-gum/frida-gum.h vendor/frida-gum/include/frida-gum.h 2>/dev/null | head -1)")"
+          python3 - "$SDK" "$GUM" <<'PY'
+          import json, os, subprocess, sys
+          sdk, gum = sys.argv[1], sys.argv[2]
+          files = [f for f in subprocess.check_output(["git", "ls-files", "src/*.mm"]).decode().split()
+                   if f.endswith(".mm")]
+          entries = [{"directory": os.getcwd(),
+                      "file": name,
+                      "command": ("clang++ -std=c++17 -fobjc-arc -fblocks -x objective-c++ "
+                                  f"-isysroot {sdk} -target arm64-apple-ios14.0 "
+                                  f"-I{gum} -I{gum}/include -Isrc -Isrc/core -Isrc/features -c {name}")}
+                     for name in files]
+          json.dump(entries, open("compile_commands.json", "w"), indent=1)
+          print("tus:", len(entries))
+          PY
+          if ! git ls-files 'src/*.mm' | xargs -r clang-tidy -p . --config-file=/tmp/clang-tidy-config.yaml --fix --fix-errors --quiet; then
+            echo "clang-tidy reported diagnostics that are not fixable; continuing"
+          fi
+          rm -f compile_commands.json
+
+      - name: Verify
+        run: |
+          set -euo pipefail
+          export THEOS="$HOME/theos"
+          jobs="$(( $(nproc) + 1 ))"
+          if make -j"$jobs" ARCHS=arm64 DEBUG=0 FINALPACKAGE=1 >/tmp/build.log 2>&1; then
+            echo "build gate passed"
+            exit 0
+          fi
+          echo "build failed; checking whether the branch compiles without tidy fixes"
+          tail -40 /tmp/build.log || true
+          git checkout -- src
+          rm -rf .theos
+          if make -j"$jobs" ARCHS=arm64 DEBUG=0 FINALPACKAGE=1 >/tmp/build.log 2>&1; then
+            echo "branch compiles without tidy fixes; dropping them"
+            exit 0
+          fi
+          echo "branch does not compile as committed"
+          tail -40 /tmp/build.log || true
+          exit 1
+
+      - name: Format
+        run: |
+          set -euo pipefail
+          style='{BasedOnStyle: LLVM, Language: Cpp, Standard: c++17,
+            IndentWidth: 4, TabWidth: 4, UseTab: Never, ContinuationIndentWidth: 4,
+            ColumnLimit: 100,
+            BreakBeforeBraces: Allman,
+            BraceWrapping: {AfterClass: true, AfterControlStatement: Always, AfterEnum: true, AfterFunction: true, AfterNamespace: true, AfterObjCDeclaration: true, AfterStruct: true, AfterUnion: true, AfterExternBlock: true, BeforeCatch: true, BeforeElse: true, IndentBraces: false, SplitEmptyFunction: true, SplitEmptyRecord: true, SplitEmptyNamespace: true},
+            AllowShortIfStatementsOnASingleLine: WithoutElse,
+            AllowShortBlocksOnASingleLine: Empty,
+            AllowShortFunctionsOnASingleLine: None,
+            AllowShortLambdasOnASingleLine: None,
+            AllowShortLoopsOnASingleLine: false,
+            AllowShortCaseLabelsOnASingleLine: false,
+            AllowShortEnumsOnASingleLine: false,
+            BreakBeforeTernaryOperators: true,
+            BreakBeforeBinaryOperators: None,
+            BreakStringLiterals: true,
+            BinPackArguments: false,
+            BinPackParameters: false,
+            AlignAfterOpenBracket: Align,
+            AlignConsecutiveAssignments: true,
+            AlignConsecutiveDeclarations: true,
+            AlignConsecutiveMacros: true,
+            AlignEscapedNewlines: Left,
+            AlignOperands: Align,
+            AlignTrailingComments: true,
+            PointerAlignment: Left,
+            DerivePointerAlignment: false,
+            SpaceAfterCStyleCast: true,
+            SpaceAfterLogicalNot: false,
+            SpaceBeforeParens: ControlStatements,
+            SpaceBeforeRangeBasedForLoopColon: true,
+            SpaceInEmptyBlock: false,
+            SpaceInEmptyParentheses: false,
+            SpacesBeforeTrailingComments: 2,
+            Cpp11BracedListStyle: true,
+            SortIncludes: false,
+            FixNamespaceComments: false,
+            ReflowComments: true,
+            IndentPPDirectives: AfterHash,
+            IndentCaseLabels: false,
+            IndentCaseBlocks: false,
+            NamespaceIndentation: None,
+            CompactNamespaces: false,
+            MaxEmptyLinesToKeep: 1,
+            KeepEmptyLinesAtTheStartOfBlocks: false,
+            SeparateDefinitionBlocks: Always,
+            LambdaBodyIndentation: OuterScope}'
+          files() {
+            git ls-files -z -- 'src/*.c' 'src/*.cpp' 'src/*.mm' 'src/*.h' 'src/*.hpp'
+          }
+          files | xargs -0 -r clang-format -i -style="$style"
+          files | xargs -0 -r sed -i -e 's/[[:space:]]\+$//'
+          files | while IFS= read -r -d '' f; do
+            if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then
+              printf '\n' >> "$f"
+            fi
+          done
+
+      - name: Push
+        id: push
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+            echo "Protected branch $BRANCH: skip push"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -u
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "chore(prepare): tidy, format and clean"
+          git pull --rebase origin "$BRANCH"
+          git push origin "HEAD:$BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        if: steps.push.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build.yml --ref "$GITHUB_REF_NAME"

@@ -1,0 +1,74 @@
+name: Recoil-Br
+
+on:
+  push:
+    branches: [main, test, gum]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FRIDA_VERSION: 17.24.3
+
+concurrency:
+  group: recoil-br-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache
+        uses: actions/cache@v6
+        with:
+          path: ~/theos
+          key: theos-${{ runner.os }}-v6
+
+      - name: Gum
+        run: |
+          set -euo pipefail
+          dir="vendor/frida-gum"
+          if [ -f "$dir/frida-gum.h" ] || [ -f "$dir/include/frida-gum.h" ]; then
+            echo "using committed devkit"
+            exit 0
+          fi
+          mkdir -p "$dir"
+          curl -fsSL -o /tmp/gum.tar.xz \
+            "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-gum-devkit-${FRIDA_VERSION}-ios-arm64.tar.xz"
+          tar -xJf /tmp/gum.tar.xz -C "$dir"
+          ls -la "$dir"
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          export THEOS="$HOME/theos"
+          if [ ! -f "$THEOS/makefiles/common.mk" ] || [ -z "$(ls -A "$THEOS/toolchain/linux/iphone" 2>/dev/null)" ]; then
+            curl -fsSL -o /tmp/theos-install https://raw.githubusercontent.com/theos/theos/master/bin/install-theos
+            sed -i 's/\blibxml2\b/libxml2-16/' /tmp/theos-install
+            bash /tmp/theos-install </dev/null
+            lib="$(dpkg -L libxml2-16 | grep 'libxml2\.so\.16$' | head -1)"
+            [ -n "$lib" ] && sudo ln -sf "$lib" "$(dirname "$lib")/libxml2.so.2"
+          fi
+          make -j"$(( $(nproc) + 1 ))" ARCHS=arm64 DEBUG=0 FINALPACKAGE=1
+          mkdir -p out
+          dylib="$(find .theos -name Recoil-Br.dylib ! -path '*dSYM*' | head -1)"
+          [ -n "$dylib" ] || { echo "Recoil-Br.dylib not found"; exit 1; }
+          cp "$dylib" out/Recoil-Br.dylib
+          strip -x out/Recoil-Br.dylib 2>/dev/null || true
+
+      - name: Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Recoil-Br
+          path: out/Recoil-Br.dylib
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: out/Recoil-Br.dylib
