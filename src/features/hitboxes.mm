@@ -55,8 +55,4 @@ void hitboxes_apply() {
 
     for (int i = 0; i < kSphereCount; ++i)
         table[i].radius = g_base[i] * kMultiplier;
-
-    gum_mprotect(reinterpret_cast<gpointer>((base + RVA_PED_HITBOX_SPHERES) & ~static_cast<gsize>(0xFFF)),
-                 kSphereCount * sizeof(PedHitboxSphere) + static_cast<gsize>(0xFFF),
-                 GUM_PAGE_READ);
 }
