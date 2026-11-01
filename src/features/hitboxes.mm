@@ -19,8 +19,13 @@ constexpr float kMultiplier = 1.5f;
 
 uintptr_t game_base() {
     static uintptr_t base = 0;
-    if (base == 0)
-        base = reinterpret_cast<uintptr_t>(gum_module_find_base_address("blackrussia-client"));
+    if (base == 0) {
+        GumModule *module = gum_process_find_module_by_name("blackrussia-client");
+        if (module != nullptr) {
+            base = static_cast<uintptr_t>(gum_module_get_range(module)->base_address);
+            g_object_unref(module);
+        }
+    }
     return base;
 }
 
@@ -37,20 +42,21 @@ void snapshot(PedHitboxSphere *table) {
 }
 
 void hitboxes_apply() {
-    uintptr_t table_addr = game_base() + RVA_PED_HITBOX_SPHERES;
-    auto *table = reinterpret_cast<PedHitboxSphere *>(table_addr);
-    if (!table) return;
+    uintptr_t base = game_base();
+    if (base == 0) return;
+
+    auto *table = reinterpret_cast<PedHitboxSphere *>(base + RVA_PED_HITBOX_SPHERES);
 
     snapshot(table);
 
-    gum_mprotect(reinterpret_cast<gpointer>(table_addr & ~static_cast<gsize>(0xFFF)),
+    gum_mprotect(reinterpret_cast<gpointer>((base + RVA_PED_HITBOX_SPHERES) & ~static_cast<gsize>(0xFFF)),
                  kSphereCount * sizeof(PedHitboxSphere) + static_cast<gsize>(0xFFF),
                  GUM_PAGE_RW);
 
     for (int i = 0; i < kSphereCount; ++i)
         table[i].radius = g_base[i] * kMultiplier;
 
-    gum_mprotect(reinterpret_cast<gpointer>(table_addr & ~static_cast<gsize>(0xFFF)),
+    gum_mprotect(reinterpret_cast<gpointer>((base + RVA_PED_HITBOX_SPHERES) & ~static_cast<gsize>(0xFFF)),
                  kSphereCount * sizeof(PedHitboxSphere) + static_cast<gsize>(0xFFF),
                  GUM_PAGE_READ);
 }

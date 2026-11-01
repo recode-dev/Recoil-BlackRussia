@@ -10,9 +10,16 @@ static void boot_features()
 
 void poll_for_game(int attempt)
 {
-    if (gum_module_find_base_address("blackrussia-client") != nullptr) {
+    static bool gum_ready = false;
+    if (!gum_ready) {
         gum_process_set_teardown_requirement(GUM_TEARDOWN_REQUIREMENT_MINIMAL);
         gum_init_embedded();
+        gum_ready = true;
+    }
+
+    GumModule *module = gum_process_find_module_by_name("blackrussia-client");
+    if (module != nullptr) {
+        g_object_unref(module);
         boot_features();
         return;
     }
