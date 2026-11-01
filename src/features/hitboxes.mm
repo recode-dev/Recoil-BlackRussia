@@ -1,7 +1,7 @@
 #import <string.h>
 #import <stdint.h>
 #import <frida-gum/gum.h>
-#import "offsets.h"
+#import "../core/offsets.h"
 
 namespace {
 
@@ -52,9 +52,4 @@ void hitboxes_apply() {
     gum_mprotect(reinterpret_cast<gpointer>(table_addr & ~static_cast<gsize>(0xFFF)),
                  kSphereCount * sizeof(PedHitboxSphere) + static_cast<gsize>(0xFFF),
                  GUM_PAGE_READ);
-}
-
-__attribute__((constructor)) static void hitboxes_boot() {
-    gum_init_embedded();
-    hitboxes_apply();
 }
