@@ -2,12 +2,10 @@
 #include <frida-gum.h>
 #include <dispatch/dispatch.h>
 #include "../features/hitboxes.h"
-#include "../features/noreload.h"
 
 static void boot_features()
 {
     hitboxes_apply();
-    noreload_apply();
 }
 
 void poll_for_game(int attempt)
