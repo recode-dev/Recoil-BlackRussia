@@ -2,10 +2,12 @@
 #include <frida-gum.h>
 #include <dispatch/dispatch.h>
 #include "../features/hitboxes.h"
+#include "../features/nametags.h"
 
 static void boot_features()
 {
     hitboxes_apply();
+    nametags_apply();
 }
 
 void poll_for_game(int attempt)
