@@ -24,14 +24,15 @@ void noreload_apply() {
     uintptr_t base = game_base();
     if (base == 0) return;
 
+    auto *target = reinterpret_cast<uint32_t *>(base + RVA_WEAPON_RELOAD_REQUEST);
+    if (*target == kRet) return;
+
     gsize page_size = gum_query_page_size();
     auto *page = reinterpret_cast<gpointer>(
-        (base + RVA_WEAPON_RELOAD_REQUEST) & ~static_cast<gsize>(page_size - 1));
+        reinterpret_cast<uintptr_t>(target) & ~static_cast<uintptr_t>(page_size - 1));
 
     if (!gum_try_mprotect(page, page_size, GUM_PAGE_RW)) return;
 
-    auto *target = static_cast<uint32_t *>(reinterpret_cast<gpointer>(
-        base + RVA_WEAPON_RELOAD_REQUEST));
     *target = kRet;
 
     gum_clear_cache(target, sizeof(kRet));
