@@ -1,5 +1,5 @@
 #include "./scan.h"
-#include <frida-gum/gum.h>
+#include <frida-gum.h>
 #include <dispatch/dispatch.h>
 #include "../features/hitboxes.h"
 

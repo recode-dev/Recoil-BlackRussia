@@ -1,6 +1,6 @@
 #import <string.h>
 #import <stdint.h>
-#import <frida-gum/gum.h>
+#import <frida-gum.h>
 #import "../core/offsets.h"
 
 namespace {
@@ -11,6 +11,7 @@ struct PedHitboxSphere {
     float off_x;
     float off_y;
     float radius;
+    uint8_t pad[12];
 };
 
 constexpr int kSphereCount = 10;
