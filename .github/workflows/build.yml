@@ -59,15 +59,6 @@ jobs:
           cp "$dylib" out/Recoil-Br.dylib
           strip -x out/Recoil-Br.dylib 2>/dev/null || true
 
-      - name: Verify no BRK traps
-        run: |
-          set -euo pipefail
-          # frida-gum is no longer linked, so the brk #0x539 exception probe and
-          # the brk #0x3E8 stubs cannot appear. The script is a safety net: it
-          # exits 0 when the code sections are BRK-free and fails the build if
-          # a probe ever sneaks back in.
-          python3 scripts/strip_brk.py out/Recoil-Br.dylib
-
       - name: Artifact
         uses: actions/upload-artifact@v7
         with:

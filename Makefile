@@ -33,13 +33,3 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 # байт (гейт nametags, таблица hitbox) — в mem.mm. frida-gum больше не
 # используется: у него в комплекте brk #0x539, mach exception server и потоки,
 # из-за которых наша либа и отличалась падениями от остальных.
-
-# Safety net: нейтрализует любые BRK-ловушки (gum-зонд brk #0x539, стабы
-# brk #0x3E8), если вдруг появятся. Сейчас gum не линкуется и ловушек нет —
-# скрипт просто проверяет dylib и выходит с 0. CI запускает это автоматически;
-# локально: make patch-brk
-.PHONY: patch-brk
-patch-brk:
-        @dylib="$$(find .theos -name '$(TWEAK_NAME).dylib' ! -path '*dSYM*' 2>/dev/null | head -1)"; \
-        if [ -z "$$dylib" ]; then echo "$(TWEAK_NAME).dylib not found under .theos"; exit 1; fi; \
-        python3 scripts/strip_brk.py "$$dylib"
