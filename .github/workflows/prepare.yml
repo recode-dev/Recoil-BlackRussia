@@ -124,7 +124,7 @@ jobs:
 
       - name: Theos
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # install-sdk: no api rate limit
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           export THEOS="$HOME/theos"
@@ -138,7 +138,6 @@ jobs:
             lib="$(dpkg -L libxml2-16 2>/dev/null | grep 'libxml2\.so\.16$' | head -1 || true)"
             if [ -n "$lib" ]; then sudo ln -sf "$lib" "$(dirname "$lib")/libxml2.so.2"; fi
           fi
-          # the old v6 cache shipped a theos without SDKs - ensure one exists
           if ! ls "$THEOS"/sdks/iPhoneOS*.sdk >/dev/null 2>&1; then
             "$THEOS/bin/install-sdk" latest
           fi

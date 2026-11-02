@@ -22,7 +22,6 @@ uintptr_t game_base()
         const char *path = _dyld_get_image_name(i);
         if (path == nullptr)
             continue;
-        // basename без модификации path
         const char *slash = strrchr(path, '/');
         const char *name = (slash != nullptr) ? slash + 1 : path;
         if (strcasecmp(name, "blackrussia-client") == 0) {
@@ -83,7 +82,6 @@ bool mem_patch_code(uintptr_t addr, const void *buf, size_t len)
     if (addr == 0 || buf == nullptr || len == 0 || !page_range(addr, len, &page, &plen))
         return false;
 
-    // 1) Прямой путь: COW-перевод страниц (__TEXT) в RW, запись, возврат RX.
     if (vm_protect(mach_task_self(), page, plen, 0,
                    VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS) {
         memcpy(reinterpret_cast<void *>(addr), buf, len);
@@ -92,8 +90,6 @@ bool mem_patch_code(uintptr_t addr, const void *buf, size_t len)
         return true;
     }
 
-    // 2) Фолбэк: собранную страницу ремапим поверх оригинала (copy-on-remap).
-    // На iOS (arm64) vm_* — это 64-битные mach_vm_* (mach_vm.h в SDK запрещён).
     vm_address_t scratch = 0;
     if (vm_allocate(mach_task_self(), &scratch, plen, VM_FLAGS_ANYWHERE) != KERN_SUCCESS)
         return false;

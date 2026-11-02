@@ -28,7 +28,7 @@ jobs:
 
       - name: Build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # install-sdk: no api rate limit
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           export THEOS="$HOME/theos"
@@ -44,8 +44,6 @@ jobs:
             [ -f "$THEOS/makefiles/common.mk" ] && [ -x "$THEOS/toolchain/linux/iphone/bin/clang" ] \
               || { echo "::error::theos core/toolchain missing after installer"; exit 1; }
           fi
-          # the old v6 cache shipped a theos without SDKs and make died on it in
-          # seconds - make sure an iPhoneOS SDK really exists before building
           if ! ls "$THEOS"/sdks/iPhoneOS*.sdk >/dev/null 2>&1; then
             "$THEOS/bin/install-sdk" latest
           fi

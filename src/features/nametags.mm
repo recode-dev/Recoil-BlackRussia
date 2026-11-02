@@ -8,31 +8,10 @@
 #import "../core/mem.h"
 #import "../core/offsets.h"
 
-// nametags.mm — редактируемый вариант.
-//
-// Дистанция ников/HP задаётся в конфиге и меняется на лету (опрос раз в секунду):
-//   <HOME>/Documents/nametags.txt          — основной путь (контейнер приложения, удобно править из Filza)
-//   /var/mobile/Library/Preferences/br-nametags.cfg — запасной путь
-// Формат: первое число в файле.
-//   0   — без лимита (по умолчанию)
-//   N>0 — показывать ники/HP до N
-//   N<0 — вести себя как ваниль (серверное значение)
-//
-// Два режима, выбираются автоматически при старте:
-//   kSlot     — на ванильном бинарнике переписываем гейт RVA_NAMETAG_GATE (7 слов):
-//               maxDist читается не из структуры [x20+0xC], а из RW-слота
-//               RVA_NAMETAG_DISTANCE (мёртвый паддинг в конце __DATA).
-//               Значение слота можно менять и извне (memory editor: base+0x19E3B84).
-//   kListener — если байты гейта незнакомы (обновилась игра): hook через
-//               ElleKit/MSHookFunction на RVA_NAMETAG_RENDERER перезаписывает поле
-//               +0xC структуры тега перед каждым вызовом оригинала. Движок ищется
-//               в рантайме; если его в процессе нет — режим недоступен.
-
 namespace {
 
-constexpr float kDefaultDistance = 0.0f; // без лимита, пока конфиг не прочитан
+constexpr float kDefaultDistance = 0.0f;
 
-// g_distance > 0 -> лимит; == 0 -> без лимита; g_follow_server -> не трогать (сервер)
 volatile float g_distance = kDefaultDistance;
 volatile bool g_follow_server = false;
 
@@ -41,8 +20,6 @@ Mode g_mode = Mode::kNone;
 bool g_gate_patched = false;
 uintptr_t g_gate = 0;
 uintptr_t g_slot = 0;
-
-// ---------- кодирование инструкций ----------
 
 uint32_t enc_adrp(uintptr_t pc, uintptr_t target, unsigned rd)
 {
@@ -77,33 +54,20 @@ uint32_t enc_bcond(uintptr_t pc, uintptr_t target, unsigned cond)
     return 0x54000000u | ((static_cast<uint32_t>(off) & 0x7FFFFu) << 5) | cond;
 }
 
-// ---------- режим kSlot: переписанный гейт + RW-слот ----------
-
-// Оригинальный гейт (ван):
-//   ldr   s0, [x20, #0xc]      ; серверный maxDist
-//   fcmp  s0, #0.0
-//   b.le  limit_check          ; maxDist <= 0 -> сравнение с 1.0
-//   fcmp  s13, s0              ; dist vs maxDist
-//   fmov  s0, #1.0
-//   fccmp s13, s0, #0, le
-//   b.hi  draw                 ; 1.0 < dist <= maxDist -> рисовать
 const uint32_t kGateOriginal[7] = {
     0xBD400E80u, 0x1E202008u, 0x540000CDu, 0x1E2021A0u,
     0x1E2E1000u, 0x1E20D5A0u, 0x540000A8u,
 };
 
-// Новый гейт: maxDist = float из слота; семантика прежняя:
-//   slot <= 0 -> рисовать при dist > 1.0; slot > 0 -> при 1.0 < dist <= slot
-// (эквивалентность оригиналу подтверждена посимуляторно, включая NaN/inf)
 bool build_gate_patch(uint32_t out[7])
 {
-    out[0] = enc_adrp(g_gate + 0x00, g_slot, 8);                        // adrp x8, slot
-    out[1] = enc_ldr_s(g_slot, 8, 0);                                   // ldr  s0, [x8, #off]
-    out[2] = 0x1E202008u;                                               // fcmp s0, #0.0
-    out[3] = enc_bcond(g_gate + 0x0C, g_gate + RVA_NAMETAG_LIMIT_CHECK - RVA_NAMETAG_GATE, 0xD); // b.le limit_check
-    out[4] = 0x1E2021A0u;                                               // fcmp s13, s0
-    out[5] = enc_bcond(g_gate + 0x14, g_gate + RVA_NAMETAG_EPILOG - RVA_NAMETAG_GATE, 0x8);      // b.hi эпилог
-    out[6] = enc_b(g_gate + 0x18, g_gate + RVA_NAMETAG_LIMIT_CHECK - RVA_NAMETAG_GATE);          // b limit_check
+    out[0] = enc_adrp(g_gate + 0x00, g_slot, 8);
+    out[1] = enc_ldr_s(g_slot, 8, 0);
+    out[2] = 0x1E202008u;
+    out[3] = enc_bcond(g_gate + 0x0C, g_gate + RVA_NAMETAG_LIMIT_CHECK - RVA_NAMETAG_GATE, 0xD);
+    out[4] = 0x1E2021A0u;
+    out[5] = enc_bcond(g_gate + 0x14, g_gate + RVA_NAMETAG_EPILOG - RVA_NAMETAG_GATE, 0x8);
+    out[6] = enc_b(g_gate + 0x18, g_gate + RVA_NAMETAG_LIMIT_CHECK - RVA_NAMETAG_GATE);
     for (int i : {0, 3, 5, 6}) {
         if (out[i] == 0)
             return false;
@@ -141,12 +105,9 @@ bool slot_mode_apply()
         return false;
 
     const bool vanilla = memcmp(cur, kGateOriginal, sizeof(cur)) == 0;
-    // старый статический патч "b.le -> b" (безлимит): отличается только слово 2
     const bool old_unlimited = memcmp(cur, kGateOriginal, 8) == 0 &&
                                cur[2] == 0x14000006u &&
                                memcmp(cur + 3, kGateOriginal + 3, sizeof(cur) - 12) == 0;
-    // наш редактируемый патч уже стоит (например, бинарник собран со статической
-    // перезаписью гейта) — тогда достаточно просто писать слот из конфига
     uint32_t want[7];
     const bool ours = build_gate_patch(want) && memcmp(cur, want, sizeof(cur)) == 0;
     if (!vanilla && !old_unlimited && !ours)
@@ -165,13 +126,8 @@ void slot_write(float value)
         *reinterpret_cast<volatile float *>(g_slot) = value;
 }
 
-// ---------- режим kListener: хук рендерера через ElleKit (fallback) ----------
-
 void *g_orig_renderer = nullptr;
 
-// Аргументы рендерера неизвестны — пересылаем все регистровые (x0..x7).
-// 4-й аргумент (x3) — указатель на структуру тега; перед вызовом оригинала
-// пишем в tag+0xC нашу дистанцию — гейт прочитает её как серверный maxDist.
 void *on_renderer(void *a0, void *a1, void *a2, void *tag, void *a4, void *a5,
                   void *a6, void *a7)
 {
@@ -192,8 +148,6 @@ bool listener_mode_apply()
     return hook_function(base + RVA_NAMETAG_RENDERER,
                          reinterpret_cast<void *>(&on_renderer), &g_orig_renderer);
 }
-
-// ---------- конфиг ----------
 
 void apply_mode();
 
@@ -263,7 +217,6 @@ void apply_mode()
 {
     if (g_mode == Mode::kSlot) {
         if (g_follow_server) {
-            // серверное значение: вернуть оригинальный гейт
             if (g_gate_patched)
                 gate_set_patched(false);
         } else {
@@ -272,7 +225,6 @@ void apply_mode()
             slot_write(g_distance);
         }
     }
-    // kListener: значение берётся на каждом вызове в on_renderer
 }
 
 void config_timer_start()
@@ -289,20 +241,20 @@ void config_timer_start()
     dispatch_resume(timer);
 }
 
-} // namespace
+}
 
 bool nametags_apply()
 {
     if (g_mode != Mode::kNone)
-        return true; // уже работает
+        return true;
     if (game_base() == 0)
         return false;
 
-    poll_config(); // первичное чтение значения (apply_mode ещё неактивен)
+    poll_config();
 
     if (slot_mode_apply()) {
         g_mode = Mode::kSlot;
-        apply_mode(); // записать значение в слот / выставить состояние гейта
+        apply_mode();
         config_timer_start();
         return true;
     }
@@ -312,6 +264,5 @@ bool nametags_apply()
         return true;
     }
 
-    // гейт не опознан и хук-движок пока недоступен — повторим попытку позже
     return false;
 }

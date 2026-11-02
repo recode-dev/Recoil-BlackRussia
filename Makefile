@@ -7,8 +7,6 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME := Recoil-Br
 
-# clang modules в theos-SDK капризны (module 'Darwin' не собирается тулчейном)
-# и нам не нужны: весь код на классических #include
 Recoil-Br_USE_MODULES = 0
 
 Recoil-Br_FILES := $(shell find $(SRC_DIR) -name "*.mm" | sort)
@@ -27,9 +25,3 @@ Recoil-Br_OBJCCFLAGS := -fobjc-arc -std=c++17 $(RECOIL_WARNING_FLAGS) $(RECOIL_H
 Recoil-Br_LDFLAGS := $(RECOIL_LINK_HARDEN) -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
-
-# Хук-движок — ElleKit: MSHookFunction резолвится в рантайме (dlsym), поэтому
-# линковать libellekit/libsubstrate не нужно — dylib грузится всегда. Патчи
-# байт (гейт nametags, таблица hitbox) — в mem.mm. frida-gum больше не
-# используется: у него в комплекте brk #0x539, mach exception server и потоки,
-# из-за которых наша либа и отличалась падениями от остальных.

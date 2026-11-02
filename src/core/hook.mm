@@ -9,11 +9,9 @@ ms_hook_function_t hook_engine()
     if (resolved)
         return cached;
 
-    // ElleKit/TrollFools/джейлбрейки: MSHookFunction уже в глобальном скоупе
     cached = reinterpret_cast<ms_hook_function_t>(dlsym(RTLD_DEFAULT, "MSHookFunction"));
 
     if (cached == nullptr) {
-        // стандартные пути установки; RTLD_NOLOAD — не грузим лишнее, только ищем
         const char *paths[] = {
             "/usr/lib/libellekit.dylib",
             "/var/jb/usr/lib/libellekit.dylib",
@@ -33,7 +31,7 @@ ms_hook_function_t hook_engine()
     }
 
     if (cached != nullptr)
-        resolved = true; // неудачный поиск не кэшируем: движок мог догрузиться позже
+        resolved = true;
     return cached;
 }
 

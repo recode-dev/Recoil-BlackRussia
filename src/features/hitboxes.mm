@@ -28,7 +28,7 @@ void snapshot(PedHitboxSphere *table)
     g_snapshotted = true;
 }
 
-} // namespace
+}
 
 void hitboxes_apply()
 {
