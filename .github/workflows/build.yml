@@ -61,6 +61,14 @@ jobs:
           cp "$dylib" out/Recoil-Br.dylib
           strip -x out/Recoil-Br.dylib 2>/dev/null || true
 
+      - name: Strip BRK junk
+        run: |
+          set -euo pipefail
+          # NOP the frida-gum exception probe (brk #0x539) and gum stub traps so
+          # JIT debuggers never see "Skipping breakpoint: brk immediate ..." from
+          # our dylib; fails the build if the probe pattern disappears (gum bump).
+          python3 scripts/strip_brk.py out/Recoil-Br.dylib
+
       - name: Artifact
         uses: actions/upload-artifact@v7
         with:

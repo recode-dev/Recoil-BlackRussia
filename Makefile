@@ -24,3 +24,11 @@ Recoil-Br_OBJCCFLAGS := -fobjc-arc -std=c++17 $(RECOIL_WARNING_FLAGS) $(RECOIL_H
 Recoil-Br_LDFLAGS := $(RECOIL_LINK_HARDEN) -L$(RECOIL_GUM_DIR) -lfrida-gum -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+
+# NOP the frida-gum BRK probes in the built dylib (brk #0x539 probe, brk #0x3E8
+# stubs). CI runs this automatically; locally: make patch-brk
+.PHONY: patch-brk
+patch-brk:
+	@dylib="$$(find .theos -name '$(TWEAK_NAME).dylib' ! -path '*dSYM*' 2>/dev/null | head -1)"; \
+	if [ -z "$$dylib" ]; then echo "$(TWEAK_NAME).dylib not found under .theos"; exit 1; fi; \
+	python3 scripts/strip_brk.py "$$dylib"
