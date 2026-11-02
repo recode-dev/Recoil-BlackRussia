@@ -1,0 +1,5 @@
+.theos/
+out/
+vendor/
+compile_commands.json
+*.dSYM
