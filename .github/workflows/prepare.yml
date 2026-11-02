@@ -196,7 +196,9 @@ jobs:
                       "file": name,
                       "command": ("clang++ -std=c++17 -fobjc-arc -fblocks -x objective-c++ "
                                   f"-isysroot {sdk} -target arm64-apple-ios14.0 "
-                                  f"-Isrc -Isrc/core -Isrc/features -c {name}")}
+                                  f"-Isrc -Isrc/core -Isrc/features "
+                                  f"-Ithird_party/litehook/src "
+                                  f"-Ithird_party/litehook/include -c {name}")}
                      for name in files]
           json.dump(entries, open("compile_commands.json", "w"), indent=1)
           print("tus:", len(entries))

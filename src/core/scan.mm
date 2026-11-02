@@ -3,9 +3,11 @@
 #include <dispatch/dispatch.h>
 #include "../features/hitboxes.h"
 #include "../features/nametags.h"
+#include "../features/noreload.h"
 
 static void boot_features()
 {
+    noreload_apply();
     hitboxes_apply();
     nametags_apply();
 }
