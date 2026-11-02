@@ -2,6 +2,7 @@
 #import <stdlib.h>
 #import <string.h>
 #import <math.h>
+#import <initializer_list>
 #import <dispatch/dispatch.h>
 #import <frida-gum.h>
 #import "../core/offsets.h"
@@ -134,7 +135,9 @@ bool gate_set_patched(bool patched) {
     }
     GatePatch p;
     memcpy(p.words, words, sizeof(p.words));
-    gum_memory_patch_code(static_cast<GumAddress>(g_gate), sizeof(p.words), gate_write_cb, &p);
+    if (!gum_memory_patch_code(reinterpret_cast<gpointer>(g_gate), sizeof(p.words),
+                               gate_write_cb, &p))
+        return false;
     g_gate_patched = patched;
     return true;
 }
@@ -149,7 +152,14 @@ bool slot_mode_apply() {
     uint32_t cur[7];
     if ((g_slot & 3) != 0)
         return false;
-    if (gum_memory_read(reinterpret_cast<gpointer>(g_gate), sizeof(cur), cur) != sizeof(cur))
+    gsize n_read = 0;
+    guint8 *snapshot =
+        gum_memory_read(reinterpret_cast<gpointer>(g_gate), sizeof(cur), &n_read);
+    if (snapshot == nullptr)
+        return false;
+    memcpy(cur, snapshot, sizeof(cur));
+    g_free(snapshot);
+    if (n_read != sizeof(cur))
         return false;
 
     const bool vanilla = memcmp(cur, kGateOriginal, sizeof(cur)) == 0;

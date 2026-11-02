@@ -44,6 +44,8 @@ jobs:
           ls -la "$dir"
 
       - name: Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # install-sdk: no api rate limit
         run: |
           set -euo pipefail
           export THEOS="$HOME/theos"

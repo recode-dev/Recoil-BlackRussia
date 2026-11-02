@@ -139,6 +139,8 @@ jobs:
           tar -xJf /tmp/gum.tar.xz -C "$dir"
 
       - name: Theos
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # install-sdk: no api rate limit
         run: |
           set -euo pipefail
           export THEOS="$HOME/theos"
