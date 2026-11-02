@@ -1,4 +1,4 @@
-import { hitboxesApply } from './hitboxes.js';
+import { hitboxesApply } from '../features/hitboxes.js';
 
 const MODULE_NAME = 'blackrussia-client';
 const POLL_INTERVAL_MS = 1000;

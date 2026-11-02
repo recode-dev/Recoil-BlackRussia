@@ -1,4 +1,4 @@
-import { RVA_PED_HITBOX_SPHERES } from './offsets.js';
+import { RVA_PED_HITBOX_SPHERES } from '../core/offsets.js';
 
 const SPHERE_SIZE = 32;
 const RADIUS_OFFSET = 16;
