@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-26.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/theos
-          key: theos-${{ runner.os }}-v6
+          key: theos-${{ runner.os }}-v7
 
       - name: Gum
         run: |
@@ -47,13 +47,26 @@ jobs:
         run: |
           set -euo pipefail
           export THEOS="$HOME/theos"
-          if [ ! -f "$THEOS/makefiles/common.mk" ] || [ -z "$(ls -A "$THEOS/toolchain/linux/iphone" 2>/dev/null)" ]; then
+          need_install=0
+          [ -f "$THEOS/makefiles/common.mk" ] || need_install=1
+          [ -x "$THEOS/toolchain/linux/iphone/bin/clang" ] || need_install=1
+          if [ "$need_install" = 1 ]; then
             curl -fsSL -o /tmp/theos-install https://raw.githubusercontent.com/theos/theos/master/bin/install-theos
             sed -i 's/\blibxml2\b/libxml2-16/' /tmp/theos-install
-            bash /tmp/theos-install </dev/null
-            lib="$(dpkg -L libxml2-16 | grep 'libxml2\.so\.16$' | head -1)"
-            [ -n "$lib" ] && sudo ln -sf "$lib" "$(dirname "$lib")/libxml2.so.2"
+            bash /tmp/theos-install </dev/null || true
+            lib="$(dpkg -L libxml2-16 2>/dev/null | grep 'libxml2\.so\.16$' | head -1 || true)"
+            if [ -n "$lib" ]; then sudo ln -sf "$lib" "$(dirname "$lib")/libxml2.so.2"; fi
+            [ -f "$THEOS/makefiles/common.mk" ] && [ -x "$THEOS/toolchain/linux/iphone/bin/clang" ] \
+              || { echo "::error::theos core/toolchain missing after installer"; exit 1; }
           fi
+          # the old v6 cache shipped a theos without SDKs and make died on it in
+          # seconds - make sure an iPhoneOS SDK really exists before building
+          if ! ls "$THEOS"/sdks/iPhoneOS*.sdk >/dev/null 2>&1; then
+            "$THEOS/bin/install-sdk" latest
+          fi
+          ls "$THEOS"/sdks/iPhoneOS*.sdk >/dev/null 2>&1 \
+            || { echo "::error::no iPhoneOS SDK under $THEOS/sdks"; exit 1; }
+          command -v ldid >/dev/null 2>&1 || sudo apt-get install -y -qq ldid || true
           make -j"$(( $(nproc) + 1 ))" ARCHS=arm64 DEBUG=0 FINALPACKAGE=1
           mkdir -p out
           dylib="$(find .theos -name Recoil-Br.dylib ! -path '*dSYM*' | head -1)"
