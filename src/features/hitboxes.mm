@@ -1,3 +1,0 @@
-void hitboxes_apply()
-{
-}
