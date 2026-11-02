@@ -1,3 +1,3 @@
 #pragma once
 
-void nametags_apply();
+bool nametags_apply();

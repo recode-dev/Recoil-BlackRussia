@@ -1,3 +1,3 @@
 #pragma once
 
-void noreload_apply();
+bool noreload_apply();

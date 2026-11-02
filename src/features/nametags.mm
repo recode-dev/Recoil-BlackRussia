@@ -1,9 +1,10 @@
-#import <stdio.h>
-#import <stdlib.h>
-#import <string.h>
-#import <math.h>
+#import <cstdio>
+#import <cstdlib>
+#import <cstring>
+#import <cmath>
 #import <initializer_list>
 #import <dispatch/dispatch.h>
+#import "../core/hook.h"
 #import "../core/mem.h"
 #import "../core/offsets.h"
 
@@ -17,16 +18,15 @@
 //   N>0 — показывать ники/HP до N
 //   N<0 — вести себя как ваниль (серверное значение)
 //
-// Режим один — kSlot: на ванильном бинарнике переписываем гейт RVA_NAMETAG_GATE
-// (7 слов): maxDist читается не из структуры [x20+0xC], а из RW-слота
-// RVA_NAMETAG_DISTANCE (мёртвый паддинг в конце __DATA). Значение слота можно
-// менять и извне (memory editor: base+0x19E3B84). Старый статический безлимитный
-// патч (b.le -> b) тоже распознаётся.
-//
-// Если байты гейта не похожи ни на ваниль, ни на наш патч (обновилась игра) —
-// фича просто не включается: раньше тут был gum-listener как fallback, но он
-// тянул весь frida-gum (brk #0x539, mach exception server) и был причиной
-// падений; при обновлении игры его RVA всё равно устарел бы.
+// Два режима, выбираются автоматически при старте:
+//   kSlot     — на ванильном бинарнике переписываем гейт RVA_NAMETAG_GATE (7 слов):
+//               maxDist читается не из структуры [x20+0xC], а из RW-слота
+//               RVA_NAMETAG_DISTANCE (мёртвый паддинг в конце __DATA).
+//               Значение слота можно менять и извне (memory editor: base+0x19E3B84).
+//   kListener — если байты гейта незнакомы (обновилась игра): hook через
+//               ElleKit/MSHookFunction на RVA_NAMETAG_RENDERER перезаписывает поле
+//               +0xC структуры тега перед каждым вызовом оригинала. Движок ищется
+//               в рантайме; если его в процессе нет — режим недоступен.
 
 namespace {
 
@@ -36,7 +36,7 @@ constexpr float kDefaultDistance = 0.0f; // без лимита, пока кон
 volatile float g_distance = kDefaultDistance;
 volatile bool g_follow_server = false;
 
-enum class Mode { kNone, kSlot };
+enum class Mode { kNone, kSlot, kListener };
 Mode g_mode = Mode::kNone;
 bool g_gate_patched = false;
 uintptr_t g_gate = 0;
@@ -165,6 +165,34 @@ void slot_write(float value)
         *reinterpret_cast<volatile float *>(g_slot) = value;
 }
 
+// ---------- режим kListener: хук рендерера через ElleKit (fallback) ----------
+
+void *g_orig_renderer = nullptr;
+
+// Аргументы рендерера неизвестны — пересылаем все регистровые (x0..x7).
+// 4-й аргумент (x3) — указатель на структуру тега; перед вызовом оригинала
+// пишем в tag+0xC нашу дистанцию — гейт прочитает её как серверный maxDist.
+void *on_renderer(void *a0, void *a1, void *a2, void *tag, void *a4, void *a5,
+                  void *a6, void *a7)
+{
+    if (tag != nullptr && !g_follow_server)
+        *reinterpret_cast<volatile float *>(static_cast<uint8_t *>(tag) + 0xC) = g_distance;
+
+    using renderer_t = void *(*)(void *, void *, void *, void *, void *, void *, void *, void *);
+    return reinterpret_cast<renderer_t>(g_orig_renderer)(a0, a1, a2, tag, a4, a5, a6, a7);
+}
+
+bool listener_mode_apply()
+{
+    if (g_orig_renderer != nullptr)
+        return true;
+    const uintptr_t base = game_base();
+    if (base == 0)
+        return false;
+    return hook_function(base + RVA_NAMETAG_RENDERER,
+                         reinterpret_cast<void *>(&on_renderer), &g_orig_renderer);
+}
+
 // ---------- конфиг ----------
 
 void apply_mode();
@@ -244,6 +272,7 @@ void apply_mode()
             slot_write(g_distance);
         }
     }
+    // kListener: значение берётся на каждом вызове в on_renderer
 }
 
 void config_timer_start()
@@ -262,17 +291,27 @@ void config_timer_start()
 
 } // namespace
 
-void nametags_apply()
+bool nametags_apply()
 {
-    if (game_base() == 0 || g_mode != Mode::kNone)
-        return;
+    if (g_mode != Mode::kNone)
+        return true; // уже работает
+    if (game_base() == 0)
+        return false;
 
     poll_config(); // первичное чтение значения (apply_mode ещё неактивен)
 
-    if (!slot_mode_apply())
-        return; // гейт не опознан — фича отключена (см. шапку файла)
-    g_mode = Mode::kSlot;
+    if (slot_mode_apply()) {
+        g_mode = Mode::kSlot;
+        apply_mode(); // записать значение в слот / выставить состояние гейта
+        config_timer_start();
+        return true;
+    }
 
-    apply_mode(); // записать значение в слот / выставить состояние гейта
-    config_timer_start();
+    if (listener_mode_apply()) {
+        g_mode = Mode::kListener;
+        return true;
+    }
+
+    // гейт не опознан и хук-движок пока недоступен — повторим попытку позже
+    return false;
 }

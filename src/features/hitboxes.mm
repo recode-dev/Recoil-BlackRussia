@@ -1,5 +1,5 @@
-#import <string.h>
-#import <stdint.h>
+#import <cstring>
+#import <cstdint>
 #import "../core/mem.h"
 #import "../core/offsets.h"
 
@@ -32,6 +32,9 @@ void snapshot(PedHitboxSphere *table)
 
 void hitboxes_apply()
 {
+    static bool g_applied = false;
+    if (g_applied)
+        return;
     const uintptr_t base = game_base();
     if (base == 0) return;
 
@@ -44,4 +47,6 @@ void hitboxes_apply()
 
     for (int i = 0; i < kSphereCount; ++i)
         table[i].radius = g_base[i] * kMultiplier;
+
+    g_applied = true;
 }

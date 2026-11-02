@@ -3,7 +3,7 @@
 #import <mach/mach.h>
 #import <mach-o/dyld.h>
 #import <libkern/OSCacheControl.h>
-#import <string.h>
+#import <cstring>
 #import <strings.h>
 #import <unistd.h>
 

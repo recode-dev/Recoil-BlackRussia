@@ -5,21 +5,34 @@
 #include "../features/nametags.h"
 #include "../features/noreload.h"
 
-static void boot_features()
+// boot_features: применяет фичи; false — что-то ещё не готово (например,
+// хук-движок ElleKit ещё не загружен инжектором) — poll_for_game повторит.
+static bool boot_features()
 {
-    noreload_apply();
+    bool pending = false;
+
+    if (!noreload_apply())
+        pending = true;
     hitboxes_apply();
-    nametags_apply();
+    if (!nametags_apply())
+        pending = true;
+
+    return !pending;
 }
 
 void poll_for_game(int attempt)
 {
-    if (game_base() != 0) {
-        boot_features();
+    if (game_base() == 0) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(1.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(),
+                       ^{ poll_for_game(attempt + 1); });
         return;
     }
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(1.0 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(),
-                   ^{ poll_for_game(attempt + 1); });
+    if (!boot_features() && attempt < 120) {
+        // модуль уже загружен, но хук-движок не найден — подождём инжектор
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(1.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(),
+                       ^{ poll_for_game(attempt + 1); });
+    }
 }
