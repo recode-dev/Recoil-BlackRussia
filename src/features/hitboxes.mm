@@ -1,6 +1,6 @@
 #import <string.h>
 #import <stdint.h>
-#import <frida-gum.h>
+#import "../core/mem.h"
 #import "../core/offsets.h"
 
 namespace {
@@ -17,41 +17,30 @@ struct PedHitboxSphere {
 constexpr int kSphereCount = 10;
 constexpr float kMultiplier = 10.0f;
 
-uintptr_t game_base() {
-    static uintptr_t base = 0;
-    if (base == 0) {
-        GumModule *module = gum_process_find_module_by_name("blackrussia-client");
-        if (module != nullptr) {
-            base = static_cast<uintptr_t>(gum_module_get_range(module)->base_address);
-            g_object_unref(module);
-        }
-    }
-    return base;
-}
-
 float g_base[kSphereCount];
 bool g_snapshotted = false;
 
-void snapshot(PedHitboxSphere *table) {
+void snapshot(PedHitboxSphere *table)
+{
     if (g_snapshotted) return;
     for (int i = 0; i < kSphereCount; ++i)
         g_base[i] = table[i].radius;
     g_snapshotted = true;
 }
 
-}
+} // namespace
 
-void hitboxes_apply() {
-    uintptr_t base = game_base();
+void hitboxes_apply()
+{
+    const uintptr_t base = game_base();
     if (base == 0) return;
 
     auto *table = reinterpret_cast<PedHitboxSphere *>(base + RVA_PED_HITBOX_SPHERES);
 
     snapshot(table);
 
-    gum_mprotect(reinterpret_cast<gpointer>((base + RVA_PED_HITBOX_SPHERES) & ~static_cast<gsize>(0xFFF)),
-                 kSphereCount * sizeof(PedHitboxSphere) + static_cast<gsize>(0xFFF),
-                 GUM_PAGE_RW);
+    mem_make_rw(base + RVA_PED_HITBOX_SPHERES,
+                static_cast<size_t>(kSphereCount) * sizeof(PedHitboxSphere));
 
     for (int i = 0; i < kSphereCount; ++i)
         table[i].radius = g_base[i] * kMultiplier;

@@ -8,9 +8,6 @@ on:
 permissions:
   contents: write
 
-env:
-  FRIDA_VERSION: 17.24.3
-
 concurrency:
   group: recoil-br-${{ github.ref }}
   cancel-in-progress: true
@@ -28,20 +25,6 @@ jobs:
         with:
           path: ~/theos
           key: theos-${{ runner.os }}-v7
-
-      - name: Gum
-        run: |
-          set -euo pipefail
-          dir="vendor/frida-gum"
-          if [ -f "$dir/frida-gum.h" ] || [ -f "$dir/include/frida-gum.h" ]; then
-            echo "using committed devkit"
-            exit 0
-          fi
-          mkdir -p "$dir"
-          curl -fsSL -o /tmp/gum.tar.xz \
-            "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-gum-devkit-${FRIDA_VERSION}-ios-arm64.tar.xz"
-          tar -xJf /tmp/gum.tar.xz -C "$dir"
-          ls -la "$dir"
 
       - name: Build
         env:
@@ -76,14 +59,13 @@ jobs:
           cp "$dylib" out/Recoil-Br.dylib
           strip -x out/Recoil-Br.dylib 2>/dev/null || true
 
-      - name: Pre-answer gum BRK probe
+      - name: Verify no BRK traps
         run: |
           set -euo pipefail
-          # brk #0x539 -> mov x0,#0x1337: the gum exception probe is statically
-          # pre-answered, so the trap is never raised (JIT debuggers have nothing
-          # to skip) and gum proceeds as if its exception handler had replied.
-          # Also NOPs the brk #0x3E8 gum stubs. Fails the build if the probe
-          # pattern disappears (gum bump).
+          # frida-gum is no longer linked, so the brk #0x539 exception probe and
+          # the brk #0x3E8 stubs cannot appear. The script is a safety net: it
+          # exits 0 when the code sections are BRK-free and fails the build if
+          # a probe ever sneaks back in.
           python3 scripts/strip_brk.py out/Recoil-Br.dylib
 
       - name: Artifact

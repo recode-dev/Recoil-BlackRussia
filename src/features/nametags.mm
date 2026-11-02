@@ -4,7 +4,7 @@
 #import <math.h>
 #import <initializer_list>
 #import <dispatch/dispatch.h>
-#import <frida-gum.h>
+#import "../core/mem.h"
 #import "../core/offsets.h"
 
 // nametags.mm — редактируемый вариант.
@@ -17,14 +17,16 @@
 //   N>0 — показывать ники/HP до N
 //   N<0 — вести себя как ваниль (серверное значение)
 //
-// Два режима, выбираются автоматически при старте:
-//   kSlot     — на ванильном бинарнике переписываем гейт RVA_NAMETAG_GATE (7 слов):
-//               maxDist читается не из структуры [x20+0xC], а из RW-слота
-//               RVA_NAMETAG_DISTANCE (мёртвый паддинг в конце __DATA).
-//               Значение слота можно менять и извне (memory editor: base+0x19E3B84).
-//   kListener — если байты гейта неизвестны (обновилась игра): gum-слушатель на
-//               RVA_NAMETAG_RENDERER перезаписывает поле +0xC структуры тега
-//               на каждый вызов (проверено на ванили и на старом безлимитном патче).
+// Режим один — kSlot: на ванильном бинарнике переписываем гейт RVA_NAMETAG_GATE
+// (7 слов): maxDist читается не из структуры [x20+0xC], а из RW-слота
+// RVA_NAMETAG_DISTANCE (мёртвый паддинг в конце __DATA). Значение слота можно
+// менять и извне (memory editor: base+0x19E3B84). Старый статический безлимитный
+// патч (b.le -> b) тоже распознаётся.
+//
+// Если байты гейта не похожи ни на ваниль, ни на наш патч (обновилась игра) —
+// фича просто не включается: раньше тут был gum-listener как fallback, но он
+// тянул весь frida-gum (brk #0x539, mach exception server) и был причиной
+// падений; при обновлении игры его RVA всё равно устарел бы.
 
 namespace {
 
@@ -34,27 +36,16 @@ constexpr float kDefaultDistance = 0.0f; // без лимита, пока кон
 volatile float g_distance = kDefaultDistance;
 volatile bool g_follow_server = false;
 
-enum class Mode { kNone, kSlot, kListener };
+enum class Mode { kNone, kSlot };
 Mode g_mode = Mode::kNone;
 bool g_gate_patched = false;
 uintptr_t g_gate = 0;
 uintptr_t g_slot = 0;
 
-uintptr_t game_base() {
-    static uintptr_t base = 0;
-    if (base == 0) {
-        GumModule *module = gum_process_find_module_by_name("blackrussia-client");
-        if (module != nullptr) {
-            base = static_cast<uintptr_t>(gum_module_get_range(module)->base_address);
-            g_object_unref(module);
-        }
-    }
-    return base;
-}
-
 // ---------- кодирование инструкций ----------
 
-uint32_t enc_adrp(uintptr_t pc, uintptr_t target, unsigned rd) {
+uint32_t enc_adrp(uintptr_t pc, uintptr_t target, unsigned rd)
+{
     int64_t delta = (static_cast<int64_t>(target & ~0xFFFull) -
                      static_cast<int64_t>(pc & ~0xFFFull)) >> 12;
     if (delta < -(1 << 20) || delta >= (1 << 20))
@@ -63,20 +54,23 @@ uint32_t enc_adrp(uintptr_t pc, uintptr_t target, unsigned rd) {
     return 0x90000000u | ((imm & 3u) << 29) | ((imm >> 2) << 5) | rd;
 }
 
-uint32_t enc_ldr_s(uintptr_t target, unsigned rn, unsigned rt) {
+uint32_t enc_ldr_s(uintptr_t target, unsigned rn, unsigned rt)
+{
     if ((target & 3) != 0)
         return 0;
     return 0xBD400000u | (((target & 0xFFFull) >> 2) << 10) | (rn << 5) | rt;
 }
 
-uint32_t enc_b(uintptr_t pc, uintptr_t target) {
+uint32_t enc_b(uintptr_t pc, uintptr_t target)
+{
     int64_t off = (static_cast<int64_t>(target) - static_cast<int64_t>(pc)) >> 2;
     if (off < -(1 << 25) || off >= (1 << 25))
         return 0;
     return 0x14000000u | (static_cast<uint32_t>(off) & 0x03FFFFFFu);
 }
 
-uint32_t enc_bcond(uintptr_t pc, uintptr_t target, unsigned cond) {
+uint32_t enc_bcond(uintptr_t pc, uintptr_t target, unsigned cond)
+{
     int64_t off = (static_cast<int64_t>(target) - static_cast<int64_t>(pc)) >> 2;
     if (off < -(1 << 18) || off >= (1 << 18))
         return 0;
@@ -101,11 +95,8 @@ const uint32_t kGateOriginal[7] = {
 // Новый гейт: maxDist = float из слота; семантика прежняя:
 //   slot <= 0 -> рисовать при dist > 1.0; slot > 0 -> при 1.0 < dist <= slot
 // (эквивалентность оригиналу подтверждена посимуляторно, включая NaN/inf)
-struct GatePatch {
-    uint32_t words[7];
-};
-
-bool build_gate_patch(uint32_t out[7]) {
+bool build_gate_patch(uint32_t out[7])
+{
     out[0] = enc_adrp(g_gate + 0x00, g_slot, 8);                        // adrp x8, slot
     out[1] = enc_ldr_s(g_slot, 8, 0);                                   // ldr  s0, [x8, #off]
     out[2] = 0x1E202008u;                                               // fcmp s0, #0.0
@@ -120,12 +111,8 @@ bool build_gate_patch(uint32_t out[7]) {
     return true;
 }
 
-void gate_write_cb(gpointer mem, gpointer user_data) {
-    const GatePatch *p = static_cast<const GatePatch *>(user_data);
-    memcpy(mem, p->words, sizeof(p->words));
-}
-
-bool gate_set_patched(bool patched) {
+bool gate_set_patched(bool patched)
+{
     uint32_t words[7];
     if (patched) {
         if (!build_gate_patch(words))
@@ -133,16 +120,14 @@ bool gate_set_patched(bool patched) {
     } else {
         memcpy(words, kGateOriginal, sizeof(words));
     }
-    GatePatch p;
-    memcpy(p.words, words, sizeof(p.words));
-    if (!gum_memory_patch_code(reinterpret_cast<gpointer>(g_gate), sizeof(p.words),
-                               gate_write_cb, &p))
+    if (!mem_patch_code(g_gate, words, sizeof(words)))
         return false;
     g_gate_patched = patched;
     return true;
 }
 
-bool slot_mode_apply() {
+bool slot_mode_apply()
+{
     const uintptr_t base = game_base();
     if (base == 0)
         return false;
@@ -152,14 +137,7 @@ bool slot_mode_apply() {
     uint32_t cur[7];
     if ((g_slot & 3) != 0)
         return false;
-    gsize n_read = 0;
-    guint8 *snapshot =
-        gum_memory_read(reinterpret_cast<gpointer>(g_gate), sizeof(cur), &n_read);
-    if (snapshot == nullptr)
-        return false;
-    memcpy(cur, snapshot, sizeof(cur));
-    g_free(snapshot);
-    if (n_read != sizeof(cur))
+    if (!mem_read(g_gate, cur, sizeof(cur)))
         return false;
 
     const bool vanilla = memcmp(cur, kGateOriginal, sizeof(cur)) == 0;
@@ -181,44 +159,18 @@ bool slot_mode_apply() {
     return gate_set_patched(true);
 }
 
-void slot_write(float value) {
+void slot_write(float value)
+{
     if (g_slot != 0)
         *reinterpret_cast<volatile float *>(g_slot) = value;
-}
-
-// ---------- режим kListener: gum-слушатель (fallback) ----------
-
-void on_nametag_enter(GumInvocationContext *ctx, gpointer) {
-    if (g_follow_server)
-        return;
-    auto *tag = static_cast<uint8_t *>(gum_invocation_context_get_nth_argument(ctx, 3));
-    if (tag != nullptr)
-        *reinterpret_cast<volatile float *>(tag + 0xC) = g_distance;
-}
-
-bool listener_mode_apply() {
-    const uintptr_t base = game_base();
-    if (base == 0)
-        return false;
-
-    GumInterceptor *interceptor = gum_interceptor_obtain();
-    GumInvocationListener *listener = gum_make_call_listener(on_nametag_enter, nullptr, nullptr, nullptr);
-    if (!gum_interceptor_attach(interceptor,
-                                reinterpret_cast<gpointer>(base + RVA_NAMETAG_RENDERER),
-                                listener, nullptr)) {
-        g_object_unref(listener);
-        g_object_unref(interceptor);
-        return false;
-    }
-    g_object_unref(interceptor);
-    return true;
 }
 
 // ---------- конфиг ----------
 
 void apply_mode();
 
-bool read_value(FILE *fp, float *out) {
+bool read_value(FILE *fp, float *out)
+{
     char line[128];
     while (fgets(line, sizeof(line), fp) != nullptr) {
         const char *p = line;
@@ -236,7 +188,8 @@ bool read_value(FILE *fp, float *out) {
     return false;
 }
 
-void poll_config() {
+void poll_config()
+{
     float v = 0.0f;
     bool have = false;
 
@@ -278,7 +231,8 @@ void poll_config() {
     apply_mode();
 }
 
-void apply_mode() {
+void apply_mode()
+{
     if (g_mode == Mode::kSlot) {
         if (g_follow_server) {
             // серверное значение: вернуть оригинальный гейт
@@ -290,10 +244,10 @@ void apply_mode() {
             slot_write(g_distance);
         }
     }
-    // kListener: значение берётся на каждом вызове в on_nametag_enter
 }
 
-void config_timer_start() {
+void config_timer_start()
+{
     static dispatch_source_t timer = nullptr;
     if (timer != nullptr)
         return;
@@ -308,20 +262,17 @@ void config_timer_start() {
 
 } // namespace
 
-void nametags_apply() {
+void nametags_apply()
+{
     if (game_base() == 0 || g_mode != Mode::kNone)
         return;
 
     poll_config(); // первичное чтение значения (apply_mode ещё неактивен)
 
-    if (slot_mode_apply()) {
-        g_mode = Mode::kSlot;
-    } else if (listener_mode_apply()) {
-        g_mode = Mode::kListener;
-    } else {
-        return;
-    }
+    if (!slot_mode_apply())
+        return; // гейт не опознан — фича отключена (см. шапку файла)
+    g_mode = Mode::kSlot;
 
-    apply_mode();      // записать значение в слот / выставить состояние гейта
+    apply_mode(); // записать значение в слот / выставить состояние гейта
     config_timer_start();
 }

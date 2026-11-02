@@ -120,24 +120,6 @@ jobs:
           path: ~/theos
           key: theos-${{ runner.os }}-v7
 
-      - name: Gum
-        run: |
-          set -euo pipefail
-          ver="$(grep -m1 'FRIDA_VERSION:' .github/workflows/build.yml 2>/dev/null | awk '{print $2}' || true)"
-          if [ -z "$ver" ]; then
-            ver="17.24.3"
-          fi
-          echo "frida-gum devkit: $ver"
-          dir="vendor/frida-gum"
-          if [ -f "$dir/frida-gum.h" ] || [ -f "$dir/include/frida-gum.h" ]; then
-            echo "using committed devkit"
-            exit 0
-          fi
-          mkdir -p "$dir"
-          curl -fsSL -o /tmp/gum.tar.xz \
-            "https://github.com/frida/frida/releases/download/${ver}/frida-gum-devkit-${ver}-ios-arm64.tar.xz"
-          tar -xJf /tmp/gum.tar.xz -C "$dir"
-
       - name: Theos
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # install-sdk: no api rate limit
@@ -205,17 +187,16 @@ jobs:
             echo "no iPhoneOS sdk in $THEOS/sdks; skipping tidy"
             exit 0
           fi
-          GUM="$(dirname "$(ls vendor/frida-gum/frida-gum.h vendor/frida-gum/include/frida-gum.h 2>/dev/null | head -1)")"
-          python3 - "$SDK" "$GUM" <<'PY'
+          python3 - "$SDK" <<'PY'
           import json, os, subprocess, sys
-          sdk, gum = sys.argv[1], sys.argv[2]
+          sdk = sys.argv[1]
           files = [f for f in subprocess.check_output(["git", "ls-files", "src/*.mm"]).decode().split()
                    if f.endswith(".mm")]
           entries = [{"directory": os.getcwd(),
                       "file": name,
                       "command": ("clang++ -std=c++17 -fobjc-arc -fblocks -x objective-c++ "
                                   f"-isysroot {sdk} -target arm64-apple-ios14.0 "
-                                  f"-I{gum} -I{gum}/include -Isrc -Isrc/core -Isrc/features -c {name}")}
+                                  f"-Isrc -Isrc/core -Isrc/features -c {name}")}
                      for name in files]
           json.dump(entries, open("compile_commands.json", "w"), indent=1)
           print("tus:", len(entries))

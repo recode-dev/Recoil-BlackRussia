@@ -2,7 +2,6 @@ TARGET := iphone:clang:latest:15.0
 ARCHS := arm64
 
 SRC_DIR := src
-RECOIL_GUM_DIR := vendor/frida-gum
 
 include $(THEOS)/makefiles/common.mk
 
@@ -10,7 +9,7 @@ TWEAK_NAME := Recoil-Br
 
 Recoil-Br_FILES := $(shell find $(SRC_DIR) -name "*.mm" | sort)
 
-RECOIL_INCLUDE_FLAGS := -I$(SRC_DIR) -I$(RECOIL_GUM_DIR) -I$(RECOIL_GUM_DIR)/include
+RECOIL_INCLUDE_FLAGS := -I$(SRC_DIR)
 RECOIL_WARNING_FLAGS := -Wall -Wextra -Wno-ambiguous-macro
 RECOIL_OPT_FLAGS := -O3 -flto -fno-math-errno -fno-trapping-math \
         -fno-unwind-tables -fno-asynchronous-unwind-tables -fmerge-all-constants \
@@ -21,16 +20,16 @@ RECOIL_LINK_HARDEN := -flto -Wl,-dead_strip -Wl,-dead_strip_dylibs -Wl,-x -Wl,-S
 Recoil-Br_CFLAGS := $(RECOIL_WARNING_FLAGS) $(RECOIL_INCLUDE_FLAGS)
 Recoil-Br_CCFLAGS := -std=c++17 -fno-exceptions -fno-rtti $(RECOIL_WARNING_FLAGS) $(RECOIL_HARDEN_FLAGS) $(RECOIL_INCLUDE_FLAGS)
 Recoil-Br_OBJCCFLAGS := -fobjc-arc -std=c++17 $(RECOIL_WARNING_FLAGS) $(RECOIL_HARDEN_FLAGS) $(RECOIL_INCLUDE_FLAGS)
-Recoil-Br_LDFLAGS := $(RECOIL_LINK_HARDEN) -L$(RECOIL_GUM_DIR) -lfrida-gum -Wl,-undefined,dynamic_lookup
+Recoil-Br_LDFLAGS := $(RECOIL_LINK_HARDEN) -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-# Pre-answer the frida-gum BRK probe (brk #0x539 -> mov x0,#0x1337, so gum
-# reports exception handling as supported and the trap is never raised) and
-# NOP the gum stub traps (brk #0x3E8). CI runs this automatically;
-# locally: make patch-brk
+# Safety net: нейтрализует любые BRK-ловушки (gum-зонд brk #0x539, стабы
+# brk #0x3E8), если вдруг появятся. Сейчас gum не линкуется и ловушек нет —
+# скрипт просто проверяет dylib и выходит с 0. CI запускает это автоматически;
+# локально: make patch-brk
 .PHONY: patch-brk
 patch-brk:
-	@dylib="$$(find .theos -name '$(TWEAK_NAME).dylib' ! -path '*dSYM*' 2>/dev/null | head -1)"; \
-	if [ -z "$$dylib" ]; then echo "$(TWEAK_NAME).dylib not found under .theos"; exit 1; fi; \
-	python3 scripts/strip_brk.py "$$dylib"
+        @dylib="$$(find .theos -name '$(TWEAK_NAME).dylib' ! -path '*dSYM*' 2>/dev/null | head -1)"; \
+        if [ -z "$$dylib" ]; then echo "$(TWEAK_NAME).dylib not found under .theos"; exit 1; fi; \
+        python3 scripts/strip_brk.py "$$dylib"

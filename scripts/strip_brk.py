@@ -1,29 +1,23 @@
 #!/usr/bin/env python3
-"""Pre-answer the gum BRK probe in the linked Recoil-Br.dylib (post-link step).
+"""Safety net for BRK traps in the linked Recoil-Br.dylib (post-link step).
 
-frida-gum (statically linked from the devkit) self-tests exception handling at
-init: it executes `brk #0x539` with x0=0, x1=x2=0x539, x3=3 and expects its own
-exception handler to reply x0=0x1337 and step past the trap; the return value
-of the probe is (x0 == 0x1337) = "exception handling supported". External JIT
-debuggers intercept that SIGILL first and merely skip it, so the probe fails,
-gum falls back and the JIT reports "Skipping breakpoint: brk immediate 0x539".
+frida-gum (when it was statically linked from the devkit) self-tested exception
+handling at init: it executed `brk #0x539` with x0=0, x1=x2=0x539, x3=3 and
+expected its own exception handler to reply x0=0x1337 and step past the trap;
+the return value of the probe is (x0 == 0x1337) = "exception handling
+supported". External JIT debuggers intercepted that SIGILL first and merely
+skipped it, so the probe failed and the JIT reported
+"Skipping breakpoint: brk immediate 0x539".
 
-We statically pre-answer the probe instead of removing it:
+The tweak no longer links frida-gum at all, so the probe cannot appear. This
+script stays as a safety net and does the following if a BRK ever sneaks back
+in (e.g. gum returns, a new stub is added):
 
-  brk #0x539  ->  mov x0, #0x1337
+  brk #0x539  ->  mov x0, #0x1337   (pre-answered: trap never raised)
+  brk #0x3E8  ->  nop               (gum stubs shaped `brk; b <tail>`)
 
-The exception is never raised (nothing left for a JIT tool to mishandle), the
-check `mov x20, x0; cmp x20, #0x1337` succeeds, and gum proceeds exactly as if
-a perfect handler had replied. A previously NOP-ed probe is upgraded to the
-pre-answer automatically.
-
-Also NOPs the `brk #0x3E8` (1000) gum stub entries shaped `brk; b <common
-tail>`; the following branch keeps the flow valid after the NOP and these
-stubs are never executed in normal operation anyway.
-
-Everything else (`brk #1` = llvm.trap) is real crash-path code — it is
-reported but NOT touched by default (pass --traps to NOP it too; runtime
-noise from it is already covered by the jit_handler.js debugger script).
+Everything else (`brk #1` = llvm.trap) is real crash-path code - it is
+reported but NOT touched by default (pass --traps to NOP it too).
 
 The scanner only looks at sections carrying S_ATTR_*INSTRUCTIONS, and the
 probe is located by its unique argument-setup anchor (movz x1,#0x539;
@@ -34,10 +28,10 @@ Usage:
   python3 scripts/strip_brk.py <dylib> --dry-run    # report only
   python3 scripts/strip_brk.py <dylib> --out PATH   # write patched copy
   python3 scripts/strip_brk.py <dylib> --traps      # also NOP llvm.trap etc.
-  python3 scripts/strip_brk.py <dylib> --no-strict  # don't fail when the
-                                                    # probe pattern is absent
-Exit codes: 0 = patched/already clean; 1 = probe pattern not found (strict
-mode) or the file could not be processed.
+  python3 scripts/strip_brk.py <dylib> --strict     # fail when the probe
+                                                    # pattern is absent
+Exit codes: 0 = patched/already clean/no probe (default); 1 = probe pattern
+not found in --strict mode, or the file could not be processed.
 """
 import argparse
 import struct
@@ -137,8 +131,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="report only, no writes")
     ap.add_argument("--traps", action="store_true",
                     help="also NOP brk #1 (llvm.trap) and any other brk in code")
-    ap.add_argument("--no-strict", action="store_true",
-                    help="exit 0 even when the gum probe pattern is absent")
+    ap.add_argument("--strict", action="store_true",
+                    help="exit 1 when the gum probe pattern is absent (for "
+                         "gum-linked builds; default is a no-op pass)")
     ap.add_argument("--backup", help="save the original to this path before patching")
     args = ap.parse_args()
 
@@ -224,9 +219,11 @@ def main():
 
     if not patches:
         print("strip_brk: nothing patched")
-        if probe_state == "absent" and not args.no_strict:
-            print("strip_brk: STRICT: gum probe pattern not found - has gum changed?")
-            return 1
+        if probe_state == "absent":
+            if args.strict:
+                print("strip_brk: STRICT: gum probe pattern not found - has gum changed?")
+                return 1
+            print("strip_brk: no gum probe in code sections - clean")
         return 0
 
     for pos, _old, new, why in patches:
