@@ -25,8 +25,10 @@ Recoil-Br_LDFLAGS := $(RECOIL_LINK_HARDEN) -L$(RECOIL_GUM_DIR) -lfrida-gum -Wl,-
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-# NOP the frida-gum BRK probes in the built dylib (brk #0x539 probe, brk #0x3E8
-# stubs). CI runs this automatically; locally: make patch-brk
+# Pre-answer the frida-gum BRK probe (brk #0x539 -> mov x0,#0x1337, so gum
+# reports exception handling as supported and the trap is never raised) and
+# NOP the gum stub traps (brk #0x3E8). CI runs this automatically;
+# locally: make patch-brk
 .PHONY: patch-brk
 patch-brk:
 	@dylib="$$(find .theos -name '$(TWEAK_NAME).dylib' ! -path '*dSYM*' 2>/dev/null | head -1)"; \

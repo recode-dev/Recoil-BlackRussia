@@ -61,6 +61,16 @@ jobs:
           cp "$dylib" out/Recoil-Br.dylib
           strip -x out/Recoil-Br.dylib 2>/dev/null || true
 
+      - name: Pre-answer gum BRK probe
+        run: |
+          set -euo pipefail
+          # brk #0x539 -> mov x0,#0x1337: the gum exception probe is statically
+          # pre-answered, so the trap is never raised (JIT debuggers have nothing
+          # to skip) and gum proceeds as if its exception handler had replied.
+          # Also NOPs the brk #0x3E8 gum stubs. Fails the build if the probe
+          # pattern disappears (gum bump).
+          python3 scripts/strip_brk.py out/Recoil-Br.dylib
+
       - name: Artifact
         uses: actions/upload-artifact@v7
         with:
